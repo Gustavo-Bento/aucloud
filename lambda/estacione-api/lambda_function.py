@@ -1,7 +1,8 @@
 import json
 import logging
 import os
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 
 import boto3
 
@@ -29,8 +30,9 @@ def lambda_handler(event, context):
 
     try:
 
+        # API Gateway (proxy) envia "body": null quando não há corpo
         body = json.loads(
-            event.get("body", "{}")
+            event.get("body") or "{}"
         )
 
         validate_payload(body)
@@ -90,6 +92,11 @@ def validate_payload(payload):
     Validate request payload.
     """
 
+    if not isinstance(payload, dict):
+        raise ValueError(
+            "Request body must be a JSON object"
+        )
+
     required_fields = [
         "token",
         "placa"
@@ -104,6 +111,11 @@ def validate_payload(payload):
     if missing_fields:
         raise ValueError(
             f"Missing required fields: {missing_fields}"
+        )
+
+    if not isinstance(payload["token"], str):
+        raise ValueError(
+            "Field 'token' must be a string"
         )
 
 
@@ -125,7 +137,7 @@ def validate_token(token):
             "Token not found"
         )
 
-    if item["status"] != "ATIVO":
+    if item.get("status") != "ATIVO":
         raise PermissionError(
             "Token inactive"
         )
@@ -139,8 +151,7 @@ def create_authorization(payload):
     authorization = {
         "id": generate_id(),
         "placa": payload["placa"],
-        "token": payload["token"],
-        "authorized_at": datetime.utcnow().isoformat(),
+        "authorized_at": datetime.now(timezone.utc).isoformat(),
         "status": "AUTHORIZED"
     }
 
@@ -161,8 +172,9 @@ def generate_id():
     Generate unique id.
     """
 
-    return datetime.utcnow().strftime(
-        "%Y%m%d%H%M%S%f"
+    return (
+        datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+        + uuid.uuid4().hex[:8]
     )
 
 
