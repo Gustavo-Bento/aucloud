@@ -1,0 +1,257 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Infraestrutura AUCloud - Sincronismo e Autorizacao",
+
+  "Resources": {
+
+    "SincronismoBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": "sincronismoaws-estacione"
+      }
+    },
+
+    "StickerLoadQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "UAC-StickerLoad"
+      }
+    },
+
+    "StickerErrorQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "AUC-Erros"
+      }
+    },
+
+    "StickerSyncTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": "AUC-StickerSync",
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "id",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "id",
+            "KeyType": "HASH"
+          }
+        ]
+      }
+    },
+
+    "LogTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": "AUC-Log",
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "id",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "id",
+            "KeyType": "HASH"
+          }
+        ]
+      }
+    },
+
+    "TokenAuthTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": "AUC-TokenAuth",
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "token",
+            "AttributeType": "S"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "token",
+            "KeyType": "HASH"
+          }
+        ]
+      }
+    },
+
+    "LambdaExecutionRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "AUCloudLambdaRole",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ]
+      }
+    },
+
+    "SyncS3Lambda": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "AUCloud-SyncS3",
+        "Runtime": "python3.12",
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "LambdaExecutionRole",
+            "Arn"
+          ]
+        },
+        "Code": {
+          "ZipFile": "def handler(event, context): return {'statusCode':200}"
+        },
+        "Environment": {
+          "Variables": {
+            "QUEUE_URL": {
+              "Ref": "StickerLoadQueue"
+            }
+          }
+        }
+      }
+    },
+
+    "ConsumerLambda": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "AUCloud-Consumer",
+        "Runtime": "python3.12",
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "LambdaExecutionRole",
+            "Arn"
+          ]
+        },
+        "Code": {
+          "ZipFile": "def handler(event, context): return {'statusCode':200}"
+        }
+      }
+    },
+
+    "EstacioneApiLambda": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": "AUCloud-EstacioneAPI",
+        "Runtime": "python3.12",
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "LambdaExecutionRole",
+            "Arn"
+          ]
+        },
+        "Code": {
+          "ZipFile": "def handler(event, context): return {'statusCode':200}"
+        }
+      }
+    },
+
+    "SQSTriggerConsumer": {
+      "Type": "AWS::Lambda::EventSourceMapping",
+      "Properties": {
+        "BatchSize": 10,
+        "EventSourceArn": {
+          "Fn::GetAtt": [
+            "StickerLoadQueue",
+            "Arn"
+          ]
+        },
+        "FunctionName": {
+          "Ref": "ConsumerLambda"
+        }
+      }
+    },
+
+    "ApiGateway": {
+      "Type": "AWS::ApiGateway::RestApi",
+      "Properties": {
+        "Name": "AUCloudApi"
+      }
+    },
+
+    "ApiGatewayResource": {
+      "Type": "AWS::ApiGateway::Resource",
+      "Properties": {
+        "ParentId": {
+          "Fn::GetAtt": [
+            "ApiGateway",
+            "RootResourceId"
+          ]
+        },
+        "PathPart": "autoriza",
+        "RestApiId": {
+          "Ref": "ApiGateway"
+        }
+      }
+    },
+
+    "ApiGatewayMethod": {
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "RestApiId": {
+          "Ref": "ApiGateway"
+        },
+        "ResourceId": {
+          "Ref": "ApiGatewayResource"
+        },
+        "HttpMethod": "POST",
+        "AuthorizationType": "NONE",
+        "Integration": {
+          "Type": "AWS_PROXY",
+          "IntegrationHttpMethod": "POST",
+          "Uri": {
+            "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${EstacioneApiLambda.Arn}/invocations"
+          }
+        }
+      }
+    }
+  },
+
+  "Outputs": {
+
+    "BucketName": {
+      "Value": {
+        "Ref": "SincronismoBucket"
+      }
+    },
+
+    "StickerSyncTable": {
+      "Value": {
+        "Ref": "StickerSyncTable"
+      }
+    },
+
+    "ApiId": {
+      "Value": {
+        "Ref": "ApiGateway"
+      }
+    }
+
+  }
+}
