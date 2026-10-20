@@ -73,7 +73,7 @@ flowchart LR
 Plain Text
 
 ```shell
-processo-seletivo/
+aucloud/
 │
 ├── infra/
 │ └── cloudformation.json
