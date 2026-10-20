@@ -1,0 +1,8 @@
+{
+  "Records": [
+    {
+      "messageId": "123456",
+      "body": "{\"file_name\":\"arquivo.json\",\"data\":{\"id\":\"1\",\"placa\":\"ABC1234\",\"valor\":20.50}}"
+    }
+  ]
+}
