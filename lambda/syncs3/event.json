@@ -1,0 +1,14 @@
+{
+  "Records": [
+    {
+      "s3": {
+        "bucket": {
+          "name": "sincronismoaws-estacione"
+        },
+        "object": {
+          "key": "arquivo.json"
+        }
+      }
+    }
+  ]
+}
