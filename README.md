@@ -154,36 +154,31 @@ O template CloudFormation cria automaticamente:
 
 
 ```shell
-git clone https://github.com/Gustavo-Bento/processo-seletivo.git
-cd processo-seletivo
+git clone https://github.com/Gustavo-Bento/aucloud.git
+cd aucloud
 ```
 ---
 
 ## 2. Validar o Template
 
-```Shell
-aws cloudformation validate-template \
---template-body file://infra/cloudformation.json
 ```
-
-Resultado esperado:
-
-```shell
-Template validated successfully
+pip install cfn-lint
+cfn-lint infra/cloudformation.json
 ```
 
 ---
 
-## 3. Criar a Stack
+## 3. Empacotar as Lambdas e criar a Stack
 
-```Shell
-aws cloudformation create-stack \
---stack-name processo-seletivo-stack \
---template-body file://infra/cloudformation.json \
---capabilities CAPABILITY_NAMED_IAM
+O template recebe o código das Lambdas de um bucket S3 (parâmetro `CodeBucket`).
+O script abaixo cria os `.zip`, envia ao bucket e executa o `cloudformation deploy`:
+
+```
+./scripts/deploy.sh <bucket-de-codigo> aucloud-stack sincronismoaws
 ```
 
-
+> O nome de bucket S3 é global. Se `sincronismoaws` já estiver em uso, informe outro
+> como 3º argumento e ajuste o destino do `aws s3 sync` do MS_SINCRONISMO.
 
 ---
 
@@ -191,14 +186,14 @@ aws cloudformation create-stack \
 
 ```shell
 aws cloudformation describe-stacks \
---stack-name processo-seletivo-stac
+--stack-name aucloud-stack
 ```
 
 ou
 
 ```shell
 aws cloudformation wait stack-create-complete \
---stack-name processo-seletivo-stack
+--stack-name aucloud-stack
 ```
 
 ---
@@ -256,7 +251,7 @@ Enviar para o S3:
 
 ```shell
 aws s3 cp arquivo.json \
-s3://sincronismoaws-estacione/
+s3://sincronismoaws/estacione/
 ```
 
 ---
@@ -278,10 +273,11 @@ Exemplo:
 
 ```shell
 curl --request POST \
---url https://URL/v1/estacione/autoriza \
+--url <AutorizaUrl da stack>   # .../prod/v1/estacione/autoriza \
 --header 'Content-Type: application/json' \
 --data '{
-"token":"123456"
+"token":"123456",
+"placa":"ABC1234"
 }'
 ```
 
@@ -297,6 +293,21 @@ AUC-TokenAuth
 AUC-StickerSync
 
 ```
+---
+
+# Testes
+
+```
+pip install "moto[all]" boto3 pytest cfn-lint
+pytest tests
+```
+
+Cobertura: unitários das 3 Lambdas (moto), conformidade do template com o diagrama
+(`tests/test_template.py`) e fluxo ponta a ponta (`tests/test_fluxo_diagrama.py`).
+
+> **Pendente:** o diagrama fala em *Arquivo Posicional*, mas `AUCloud-SyncS3` ainda lê JSON.
+> Há um teste `xfail` documentando isso; falta o layout (colunas/tamanhos) para implementar o parser.
+
 ---
 
 # Melhorias Futuras
