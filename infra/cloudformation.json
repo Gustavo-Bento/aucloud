@@ -1,30 +1,104 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
   "Description": "Infraestrutura AUCloud - Sincronismo e Autorizacao",
-
+  "Parameters": {
+    "BucketName": {
+      "Type": "String",
+      "Default": "sincronismoaws",
+      "Description": "Bucket S3 do sincronismo (diagrama: s3://sincronismoaws/estacione). Nomes de bucket são globais; altere se já estiver em uso."
+    },
+    "CodeBucket": {
+      "Type": "String",
+      "Description": "Bucket S3 com os .zip das Lambdas (ver scripts/deploy.sh)"
+    },
+    "SyncS3CodeKey": {
+      "Type": "String",
+      "Default": "aucloud/syncs3.zip"
+    },
+    "ConsumerCodeKey": {
+      "Type": "String",
+      "Default": "aucloud/consumer.zip"
+    },
+    "EstacioneApiCodeKey": {
+      "Type": "String",
+      "Default": "aucloud/estacione-api.zip"
+    },
+    "StageName": {
+      "Type": "String",
+      "Default": "prod"
+    }
+  },
   "Resources": {
-
     "SincronismoBucket": {
       "Type": "AWS::S3::Bucket",
+      "DependsOn": "SyncS3InvokePermission",
       "Properties": {
-        "BucketName": "sincronismoaws-estacione"
+        "BucketName": {
+          "Ref": "BucketName"
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "NotificationConfiguration": {
+          "LambdaConfigurations": [
+            {
+              "Event": "s3:ObjectCreated:*",
+              "Filter": {
+                "S3Key": {
+                  "Rules": [
+                    {
+                      "Name": "prefix",
+                      "Value": "estacione/"
+                    }
+                  ]
+                }
+              },
+              "Function": {
+                "Fn::GetAtt": [
+                  "SyncS3Lambda",
+                  "Arn"
+                ]
+              }
+            }
+          ]
+        }
       }
     },
-
-    "StickerLoadQueue": {
-      "Type": "AWS::SQS::Queue",
-      "Properties": {
-        "QueueName": "UAC-StickerLoad"
-      }
-    },
-
     "StickerErrorQueue": {
       "Type": "AWS::SQS::Queue",
       "Properties": {
-        "QueueName": "AUC-Erros"
+        "QueueName": "AUC-Erros",
+        "MessageRetentionPeriod": 1209600
       }
     },
-
+    "StickerLoadQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "UAC-StickerLoad",
+        "VisibilityTimeout": 180,
+        "RedrivePolicy": {
+          "deadLetterTargetArn": {
+            "Fn::GetAtt": [
+              "StickerErrorQueue",
+              "Arn"
+            ]
+          },
+          "maxReceiveCount": 3
+        }
+      }
+    },
     "StickerSyncTable": {
       "Type": "AWS::DynamoDB::Table",
       "Properties": {
@@ -44,7 +118,6 @@
         ]
       }
     },
-
     "LogTable": {
       "Type": "AWS::DynamoDB::Table",
       "Properties": {
@@ -64,7 +137,6 @@
         ]
       }
     },
-
     "TokenAuthTable": {
       "Type": "AWS::DynamoDB::Table",
       "Properties": {
@@ -84,7 +156,6 @@
         ]
       }
     },
-
     "LambdaExecutionRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
@@ -107,24 +178,112 @@
         },
         "ManagedPolicyArns": [
           "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "AUCloudAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "ReadSyncFiles",
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:aws:s3:::${BucketName}/estacione/*"
+                  }
+                },
+                {
+                  "Sid": "PublishToQueue",
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:SendMessage"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "StickerLoadQueue",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Sid": "ConsumeFromQueue",
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:ReceiveMessage",
+                    "sqs:DeleteMessage",
+                    "sqs:GetQueueAttributes"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "StickerLoadQueue",
+                      "Arn"
+                    ]
+                  }
+                },
+                {
+                  "Sid": "WriteTables",
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:PutItem"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "StickerSyncTable",
+                        "Arn"
+                      ]
+                    },
+                    {
+                      "Fn::GetAtt": [
+                        "LogTable",
+                        "Arn"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Sid": "ReadTokens",
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:GetItem"
+                  ],
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "TokenAuthTable",
+                      "Arn"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
         ]
       }
     },
-
     "SyncS3Lambda": {
       "Type": "AWS::Lambda::Function",
       "Properties": {
         "FunctionName": "AUCloud-SyncS3",
         "Runtime": "python3.12",
-        "Handler": "index.handler",
+        "Handler": "lambda_function.lambda_handler",
         "Role": {
           "Fn::GetAtt": [
             "LambdaExecutionRole",
             "Arn"
           ]
         },
+        "Timeout": 30,
+        "MemorySize": 256,
         "Code": {
-          "ZipFile": "def handler(event, context): return {'statusCode':200}"
+          "S3Bucket": {
+            "Ref": "CodeBucket"
+          },
+          "S3Key": {
+            "Ref": "SyncS3CodeKey"
+          }
         },
         "Environment": {
           "Variables": {
@@ -135,43 +294,90 @@
         }
       }
     },
-
     "ConsumerLambda": {
       "Type": "AWS::Lambda::Function",
       "Properties": {
         "FunctionName": "AUCloud-Consumer",
         "Runtime": "python3.12",
-        "Handler": "index.handler",
+        "Handler": "lambda_function.lambda_handler",
         "Role": {
           "Fn::GetAtt": [
             "LambdaExecutionRole",
             "Arn"
           ]
         },
+        "Timeout": 30,
+        "MemorySize": 256,
         "Code": {
-          "ZipFile": "def handler(event, context): return {'statusCode':200}"
+          "S3Bucket": {
+            "Ref": "CodeBucket"
+          },
+          "S3Key": {
+            "Ref": "ConsumerCodeKey"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "STICKER_TABLE": {
+              "Ref": "StickerSyncTable"
+            },
+            "LOG_TABLE": {
+              "Ref": "LogTable"
+            }
+          }
         }
       }
     },
-
     "EstacioneApiLambda": {
       "Type": "AWS::Lambda::Function",
       "Properties": {
         "FunctionName": "AUCloud-EstacioneAPI",
         "Runtime": "python3.12",
-        "Handler": "index.handler",
+        "Handler": "lambda_function.lambda_handler",
         "Role": {
           "Fn::GetAtt": [
             "LambdaExecutionRole",
             "Arn"
           ]
         },
+        "Timeout": 10,
+        "MemorySize": 256,
         "Code": {
-          "ZipFile": "def handler(event, context): return {'statusCode':200}"
+          "S3Bucket": {
+            "Ref": "CodeBucket"
+          },
+          "S3Key": {
+            "Ref": "EstacioneApiCodeKey"
+          }
+        },
+        "Environment": {
+          "Variables": {
+            "TOKEN_TABLE": {
+              "Ref": "TokenAuthTable"
+            },
+            "STICKER_TABLE": {
+              "Ref": "StickerSyncTable"
+            }
+          }
         }
       }
     },
-
+    "SyncS3InvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Ref": "SyncS3Lambda"
+        },
+        "Principal": "s3.amazonaws.com",
+        "SourceAccount": {
+          "Ref": "AWS::AccountId"
+        },
+        "SourceArn": {
+          "Fn::Sub": "arn:aws:s3:::${BucketName}"
+        }
+      }
+    },
     "SQSTriggerConsumer": {
       "Type": "AWS::Lambda::EventSourceMapping",
       "Properties": {
@@ -184,18 +390,19 @@
         },
         "FunctionName": {
           "Ref": "ConsumerLambda"
-        }
+        },
+        "FunctionResponseTypes": [
+          "ReportBatchItemFailures"
+        ]
       }
     },
-
     "ApiGateway": {
       "Type": "AWS::ApiGateway::RestApi",
       "Properties": {
         "Name": "AUCloudApi"
       }
     },
-
-    "ApiGatewayResource": {
+    "ApiResourceV1": {
       "Type": "AWS::ApiGateway::Resource",
       "Properties": {
         "ParentId": {
@@ -204,13 +411,36 @@
             "RootResourceId"
           ]
         },
+        "PathPart": "v1",
+        "RestApiId": {
+          "Ref": "ApiGateway"
+        }
+      }
+    },
+    "ApiResourceEstacione": {
+      "Type": "AWS::ApiGateway::Resource",
+      "Properties": {
+        "ParentId": {
+          "Ref": "ApiResourceV1"
+        },
+        "PathPart": "estacione",
+        "RestApiId": {
+          "Ref": "ApiGateway"
+        }
+      }
+    },
+    "ApiGatewayResource": {
+      "Type": "AWS::ApiGateway::Resource",
+      "Properties": {
+        "ParentId": {
+          "Ref": "ApiResourceEstacione"
+        },
         "PathPart": "autoriza",
         "RestApiId": {
           "Ref": "ApiGateway"
         }
       }
     },
-
     "ApiGatewayMethod": {
       "Type": "AWS::ApiGateway::Method",
       "Properties": {
@@ -230,28 +460,72 @@
           }
         }
       }
+    },
+    "ApiInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Ref": "EstacioneApiLambda"
+        },
+        "Principal": "apigateway.amazonaws.com",
+        "SourceArn": {
+          "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/v1/estacione/autoriza"
+        }
+      }
+    },
+    "ApiDeployment": {
+      "Type": "AWS::ApiGateway::Deployment",
+      "DependsOn": "ApiGatewayMethod",
+      "Properties": {
+        "RestApiId": {
+          "Ref": "ApiGateway"
+        }
+      }
+    },
+    "ApiStage": {
+      "Type": "AWS::ApiGateway::Stage",
+      "Properties": {
+        "RestApiId": {
+          "Ref": "ApiGateway"
+        },
+        "DeploymentId": {
+          "Ref": "ApiDeployment"
+        },
+        "StageName": {
+          "Ref": "StageName"
+        },
+        "MethodSettings": [
+          {
+            "ResourcePath": "/*",
+            "HttpMethod": "*",
+            "ThrottlingBurstLimit": 50,
+            "ThrottlingRateLimit": 25
+          }
+        ]
+      }
     }
   },
-
   "Outputs": {
-
     "BucketName": {
       "Value": {
         "Ref": "SincronismoBucket"
       }
     },
-
     "StickerSyncTable": {
       "Value": {
         "Ref": "StickerSyncTable"
       }
     },
-
     "ApiId": {
       "Value": {
         "Ref": "ApiGateway"
       }
+    },
+    "AutorizaUrl": {
+      "Value": {
+        "Fn::Sub": "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/v1/estacione/autoriza"
+      }
     }
-
   }
 }
