@@ -3,11 +3,14 @@ import json, os, re, subprocess
 import pytest
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
-T = json.load(open(os.path.join(ROOT, "infra", "cloudformation.json")))
+with open(os.path.join(ROOT, "infra", "cloudformation.json")) as _f:
+    T = json.load(_f)
 R = T["Resources"]
 
 def of(t): return {k: v for k, v in R.items() if v["Type"] == t}
-def code(fn): return open(os.path.join(ROOT, "lambda", fn, "lambda_function.py")).read()
+def code(fn):
+    with open(os.path.join(ROOT, "lambda", fn, "lambda_function.py")) as f:
+        return f.read()
 
 LAMBDAS = {"AUCloud-SyncS3": "syncs3", "AUCloud-Consumer": "consumer", "AUCloud-EstacioneAPI": "estacione-api"}
 
