@@ -1,7 +1,8 @@
 import json
 import logging
 import os
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import boto3
@@ -34,6 +35,10 @@ def lambda_handler(event, context):
         json.dumps(event)
     )
 
+    # Partial batch response (ReportBatchItemFailures): somente as mensagens
+    # com erro retornam à fila (e, após maxReceiveCount, vão para AUC-Erros).
+    batch_item_failures = []
+
     for record in event["Records"]:
 
         try:
@@ -50,16 +55,22 @@ def lambda_handler(event, context):
                 "Error processing message"
             )
 
-            create_log(
-                status="ERROR",
-                details=str(ex)
+            try:
+                create_log(
+                    status="ERROR",
+                    details=str(ex)
+                )
+            except Exception:
+                logger.exception(
+                    "Could not write error log"
+                )
+
+            batch_item_failures.append(
+                {"itemIdentifier": record["messageId"]}
             )
 
-            raise ex
-
     return {
-        "statusCode": 200,
-        "message": "Messages processed successfully"
+        "batchItemFailures": batch_item_failures
     }
 
 
@@ -116,7 +127,7 @@ def save_sticker(payload: dict):
             "valor": Decimal(
                 str(payload["valor"])
             ),
-            "processed_at": datetime.utcnow().isoformat()
+            "processed_at": datetime.now(timezone.utc).isoformat()
         }
     )
 
@@ -134,11 +145,11 @@ def create_log(
     Registra log operacional.
     """
 
-    timestamp = datetime.utcnow().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     log_table.put_item(
         Item={
-            "id": timestamp,
+            "id": str(uuid.uuid4()),
             "status": status,
             "details": details,
             "timestamp": timestamp
